@@ -209,7 +209,7 @@ def make_batch_augmentation_func(image_keys) -> callable:
             observations = observations.copy(
                 add_or_replace={
                     pixel_key: batched_random_crop(
-                        observations[pixel_key], rng, padding=4, num_batch_dims=2
+                        observations[pixel_key], rng, padding=4, num_batch_dims=1 # MODIFIED
                     )
                 }
             )

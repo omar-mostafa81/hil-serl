@@ -606,7 +606,7 @@ class SACAgentHybridSingleArm(flax.struct.PyTreeNode):
         encoder_def = EncodingWrapper(
             encoder=encoders,
             use_proprio=use_proprio,
-            enable_stacking=True,
+            enable_stacking=False, # MODIFIED
             image_keys=image_keys,
         )
 

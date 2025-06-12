@@ -20,7 +20,7 @@ def random_crop(img, rng, *, padding):
 
 
 @partial(jax.jit, static_argnames=("padding", "num_batch_dims"))
-def batched_random_crop(img, rng, *, padding, num_batch_dims: int = 1):
+def batched_random_crop(img, rng, *, padding, num_batch_dims: int = 1): # MODIFIED
     # Flatten batch dims
     original_shape = img.shape
     img = jnp.reshape(img, (-1, *img.shape[num_batch_dims:]))

@@ -67,7 +67,8 @@ def create_classifier(
     encoder_def = EncodingWrapper(
         encoder=encoders,
         use_proprio=False,
-        enable_stacking=True,
+        # enable_stacking=True,
+        enable_stacking=False,
         image_keys=image_keys,
     )
     if n_way == 2:
@@ -114,7 +115,7 @@ def create_classifier(
     with open(file_path, "rb") as f:
         encoder_params = pkl.load(f)
             
-    param_count = sum(x.size for x in jax.tree_leaves(encoder_params))
+    param_count = sum(x.size for x in jax.tree.leaves(encoder_params))
     print(
         f"Loaded {param_count/1e6}M parameters from ResNet-10 pretrained on ImageNet-1K"
     )

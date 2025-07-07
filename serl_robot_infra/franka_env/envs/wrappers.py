@@ -64,7 +64,47 @@ class MultiCameraBinaryRewardClassifierWrapper(gym.Wrapper):
         obs, info = self.env.reset(**kwargs)
         info['succeed'] = False
         return obs, info
-    
+
+class MultiCameraBinary2RewardClassifiersWrapper(gym.Wrapper):
+    """
+    This wrapper uses the camera images to compute the reward,
+    which is not part of the observation space 
+    AND
+    Uses truncation provided
+    """
+
+    def __init__(self, env: Env, reward_classifier_func, truncation_func, target_hz = None):
+        super().__init__(env)
+        self.reward_classifier_func = reward_classifier_func
+        self.truncation_func = truncation_func
+        self.target_hz = target_hz
+
+    def compute_reward(self, obs):
+        if self.reward_classifier_func is not None:
+            return self.reward_classifier_func(obs)
+        return 0
+
+    def compute_truncation(self, obs):
+        if self.truncation_func is not None:
+            return self.truncation_func(obs)
+        return 0
+
+    def step(self, action):
+        start_time = time.time()
+        obs, rew, done, truncated, info = self.env.step(action)
+        rew = self.compute_reward(obs)
+        done = done or rew
+        truncated = truncated or self.compute_truncation(obs)
+        info['succeed'] = bool(rew)
+        if self.target_hz is not None:
+            time.sleep(max(0, 1/self.target_hz - (time.time() - start_time)))
+        
+        return obs, rew, done, truncated, info
+
+    def reset(self, **kwargs):
+        obs, info = self.env.reset(**kwargs)
+        info['succeed'] = False
+        return obs, info
     
 class MultiStageBinaryRewardClassifierWrapper(gym.Wrapper):
     def __init__(self, env: Env, reward_classifier_func: List[callable]):

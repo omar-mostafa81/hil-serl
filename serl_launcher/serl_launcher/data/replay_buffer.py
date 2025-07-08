@@ -5,7 +5,7 @@ import gymnasium as gym
 import jax
 import numpy as np
 from serl_launcher.data.dataset import Dataset, DatasetDict
-
+import torch
 
 def _init_replay_dict(
     obs_space: gym.Space, capacity: int
@@ -25,6 +25,8 @@ def _insert_recursively(
     dataset_dict: DatasetDict, data_dict: DatasetDict, insert_index: int
 ):
     if isinstance(dataset_dict, np.ndarray):
+        if isinstance(data_dict, torch.Tensor):
+            data_dict = data_dict.detach().cpu().numpy()
         dataset_dict[insert_index] = data_dict
     elif isinstance(dataset_dict, dict):
         for k in dataset_dict.keys():

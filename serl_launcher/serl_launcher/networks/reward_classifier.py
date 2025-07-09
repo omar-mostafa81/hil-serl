@@ -9,7 +9,8 @@ from typing import Callable, Dict, List
 import requests
 import os
 from tqdm import tqdm
-
+import torch
+import numpy as np
 from serl_launcher.vision.resnet_v1 import resnetv1_configs, PreTrainedResNetEncoder
 from serl_launcher.common.encoding import EncodingWrapper
 
@@ -155,3 +156,59 @@ def load_classifier_func(
     )
     func = jax.jit(func)
     return func
+
+def load_torch_reward_fn(
+    key: jnp.ndarray,
+    sample: Dict[str, jnp.ndarray],
+    image_keys: List[str],
+    checkpoint_path: str,
+    n_way: int = 2,
+) :
+    """
+    Returns a reward function that accepts a single image (HWC ndarray or CHW/HWC torch.Tensor),
+    runs the JAX classifier, and returns 0/1 based on sigmoid threshold.
+    """
+    # 1) Build JAX classifier function
+    jax_fn = load_classifier_func(key, sample, image_keys, checkpoint_path, n_way)
+
+    def reward_fn(
+        obs
+    ) -> int:
+        # Extract raw image
+        if isinstance(obs, dict):
+            raw = obs[image_keys[0]]
+        else:
+            raw = obs
+
+        # Convert to numpy
+        if isinstance(raw, torch.Tensor):
+            arr = raw.detach().cpu().numpy()
+        else:
+            arr = np.array(raw)
+
+        # Ensure NHWC batch
+        if arr.ndim == 3:
+            if arr.shape[-1] == 3:
+                arr = arr[None, ...]      # HWC -> [1,H,W,C]
+            elif arr.shape[0] == 3:
+                arr = arr.transpose(1,2,0)[None, ...]  # CHW -> HWC -> batch
+            else:
+                raise ValueError(f"Unrecognized image shape {arr.shape}")
+        elif arr.ndim == 4:
+            # could be NCHW or NHWC; detect
+            if arr.shape[1] == 3:
+                arr = arr.transpose(0,2,3,1)
+        else:
+            raise ValueError(f"Unsupported array ndim={arr.ndim}")
+
+        # Run through JAX classifier
+        jax_in = {image_keys[0]: jax.device_put(arr.astype(np.float32))}
+        jax_out = jax_fn(jax_in)            # shape [1,1] or [1,n_way]
+        logits = np.array(jax.device_get(jax_out))
+        logits = logits.squeeze(0)          # [1] -> scalar or vector
+
+        # Sigmoid + threshold
+        prob = torch.sigmoid(torch.from_numpy(logits))
+        return prob
+
+    return reward_fn

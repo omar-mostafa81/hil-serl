@@ -36,7 +36,7 @@ class SERLObsWrapper(gym.ObservationWrapper):
         return obs
 
     def reset(self, **kwargs):
-        obs, info =  self.env.reset(**kwargs)
+        obs, info =  self.env.reset()
         return self.observation(obs), info
 
 def flatten_observations(obs, proprio_space, proprio_keys):

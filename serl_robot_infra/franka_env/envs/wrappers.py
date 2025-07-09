@@ -93,7 +93,7 @@ class MultiCameraBinary2RewardClassifiersWrapper(gym.Wrapper):
         start_time = time.time()
         obs, rew, done, truncated, info = self.env.step(action)
         rew = self.compute_reward(obs)
-        done = done or rew
+        # done = done or rew
         truncated = truncated or self.compute_truncation(obs)
         info['succeed'] = bool(rew)
         if self.target_hz is not None:

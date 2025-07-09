@@ -5,7 +5,7 @@ import flax.linen as nn
 from flax.training.train_state import TrainState
 from flax.training import checkpoints
 import optax
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 import requests
 import os
 from tqdm import tqdm
@@ -13,7 +13,6 @@ import torch
 import numpy as np
 from serl_launcher.vision.resnet_v1 import resnetv1_configs, PreTrainedResNetEncoder
 from serl_launcher.common.encoding import EncodingWrapper
-
 
 class BinaryClassifier(nn.Module):
     encoder_def: nn.Module
@@ -158,25 +157,30 @@ def load_classifier_func(
     return func
 
 def load_torch_reward_fn(
-    key: jnp.ndarray,
-    sample: Dict[str, jnp.ndarray],
-    image_keys: List[str],
     checkpoint_path: str,
     n_way: int = 2,
-) :
+):
     """
-    Returns a reward function that accepts a single image (HWC ndarray or CHW/HWC torch.Tensor),
-    runs the JAX classifier, and returns 0/1 based on sigmoid threshold.
+    Returns a reward function that:
+      - Lazily initializes a JAX/Flax classifier from `checkpoint_path` on first call,
+      - Infers input shape and uses a default image key,
+      - Accepts a single image (HWC ndarray or CHW/HWC torch.Tensor or dict),
+      - Runs the classifier and returns 0/1 based on sigmoid threshold.
+    Usage:
+        reward_fn = load_torch_reward_fn("path/to/ckpt/")
+        reward = reward_fn(obs)  # obs: np.ndarray or torch.Tensor or {"image": ...}
     """
-    # 1) Build JAX classifier function
-    jax_fn = load_classifier_func(key, sample, image_keys, checkpoint_path, n_way)
+    jax_fn: Optional[Callable] = None
+    params_initialized = False
+    default_key = "image"
 
     def reward_fn(
         obs
     ) -> int:
+        nonlocal jax_fn, params_initialized
         # Extract raw image
         if isinstance(obs, dict):
-            raw = obs[image_keys[0]]
+            raw = list(obs.values())[0]
         else:
             raw = obs
 
@@ -186,29 +190,51 @@ def load_torch_reward_fn(
         else:
             arr = np.array(raw)
 
-        # Ensure NHWC batch
+        # On first call, initialize jax_fn using this shape
+        if not params_initialized:
+            # Ensure HWC -> batch NHWC
+            if arr.ndim == 3:
+                h, w, c = arr.shape
+                sample = {default_key: jnp.ones((1, h, w, c), jnp.float32)}
+            elif arr.ndim == 4 and arr.shape[-1] == arr.shape[1]:
+                # NHWC batch
+                sample = {default_key: jnp.ones(arr.shape, jnp.float32)}
+            else:
+                raise ValueError(f"Cannot infer sample shape from {arr.shape}")
+            # Build jax_fn now
+            jax_fn = load_classifier_func(
+                key=jax.random.PRNGKey(0),
+                sample=sample,
+                image_keys=[default_key],
+                checkpoint_path=checkpoint_path,
+                n_way=n_way,
+            )
+            params_initialized = True
+
+        # Prepare input batch NHWC
         if arr.ndim == 3:
             if arr.shape[-1] == 3:
-                arr = arr[None, ...]      # HWC -> [1,H,W,C]
+                batch = arr[None, ...]
             elif arr.shape[0] == 3:
-                arr = arr.transpose(1,2,0)[None, ...]  # CHW -> HWC -> batch
+                batch = arr.transpose(1,2,0)[None, ...]
             else:
                 raise ValueError(f"Unrecognized image shape {arr.shape}")
         elif arr.ndim == 4:
-            # could be NCHW or NHWC; detect
+            # detect NCHW vs NHWC
             if arr.shape[1] == 3:
-                arr = arr.transpose(0,2,3,1)
+                batch = arr.transpose(0,2,3,1)
+            else:
+                batch = arr
         else:
-            raise ValueError(f"Unsupported array ndim={arr.ndim}")
+            raise ValueError(f"Unsupported ndarray ndim={arr.ndim}")
 
         # Run through JAX classifier
-        jax_in = {image_keys[0]: jax.device_put(arr.astype(np.float32))}
-        jax_out = jax_fn(jax_in)            # shape [1,1] or [1,n_way]
-        logits = np.array(jax.device_get(jax_out))
-        logits = logits.squeeze(0)          # [1] -> scalar or vector
+        jax_in = {default_key: jax.device_put(batch.astype(np.float32))}
+        jax_out = jax_fn(jax_in)
+        logits = np.array(jax.device_get(jax_out)).squeeze(0)
 
         # Sigmoid + threshold
         prob = torch.sigmoid(torch.from_numpy(logits))
-        return prob
+        return prob.item()
 
     return reward_fn
